@@ -22,8 +22,8 @@ from telegram.ext import (
 )
 
 # --- الإعدادات الأساسية ---
-TOKEN = "YOUR_BOT_TOKEN_HERE"  # ضع توكن البوت بتاعك هنا
-OWNER_ID = 123456789  # ضع يور ID بتاعك هنا عشان تبقى أونر
+TOKEN = "7654632262:AAFgscYeSffYT-ox6Z3D9w95rMO7wCX_LLY"  # ضع توكن البوت بتاعك هنا
+OWNER_ID = 2118176057  # ضع يور ID بتاعك هنا عشان تبقى أونر
 
 # --- إعدادات الهجوم ---
 ATTACK_METHODS = {
